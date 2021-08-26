@@ -202,7 +202,7 @@ skip_or_fail_with() {
     # Print the test as failed with the error message
     local error_message="$1"
 
-    msg "- ${RED}it ${it}${NOFORMAT}"
+    msg "x ${RED}it ${it}${NOFORMAT}"
     if [[ "$error_message" != "" ]]; then
       msg "  E: ${RED}${error_message}${NOFORMAT}"
     fi
@@ -259,6 +259,26 @@ run() {
 
   # Use a temporary file to save the output
   eval "$@" >$output_file 2>&1
+
+  # store the exit code
+  exit_code=$?
+
+  # store the output and clear the tmp file
+  output=$(cat $output_file)
+  rm -f $output_file
+}
+
+run_s() {
+  #
+  # Evaluate IN A SUBSHELL with eval the strings passed as arguments.
+  # Handy if a cd is needed.
+  #
+  # Will expose the command output as $output and its exit code as $exit_code.
+
+  local output_file="test_$test_case"
+
+  # Use a temporary file to save the output
+  (eval "$@" >$output_file 2>&1)
 
   # store the exit code
   exit_code=$?
