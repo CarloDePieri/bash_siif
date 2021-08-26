@@ -1,0 +1,354 @@
+#!/bin/bash
+#
+# Toy test runner written in bash.
+#
+
+setup_colors() {
+  # setup colors variable
+  if [[ -t 2 ]] && [[ -z "${NO_COLOR-}" ]] && [[ "${TERM-}" != "dumb" ]]; then
+    NOFORMAT='\033[0m' RED='\033[0;31m' GREEN='\033[0;32m' ORANGE='\033[0;33m' BLUE='\033[0;34m' PURPLE='\033[0;35m' CYAN='\033[0;36m' YELLOW='\033[1;33m'
+  else
+    NOFORMAT='' RED='' GREEN='' ORANGE='' BLUE='' PURPLE='' CYAN='' YELLOW=''
+  fi
+}
+
+msg() {
+  # print a message
+  echo >&2 -e "${1-}"
+}
+
+die() {
+  # print a message and quit
+  local msg=$1
+  local code=${2-1}
+  msg "$msg"
+  exit "$code"
+}
+
+to_skip=()
+group_skip=()
+
+test_cases=()
+
+test_passed=()
+test_skipped=()
+test_failed=()
+
+log() {
+  # helper used to log a test into one of the test arrays
+  local type="$1"
+  local it="${2-"$(get_test_description)"}"
+
+  case "$type" in
+    "T") test_cases+=("$it") ;;
+    "S") test_passed+=("$it") ;;
+    "F") test_failed+=("$it") ;;
+    "X") test_skipped+=("$it") ;;
+  esac
+}
+
+skip() {
+  #
+  # Used to skip the next test:
+  #
+  # skip
+  # it "should skip" &&
+  #   true &&
+  #   s||f
+  #
+  to_skip+=(1)
+}
+
+skip_group() {
+  #
+  # Used to skip all following test in a group, like this:
+  #
+  # describe "my group"; {
+  #
+  #   it "should work" &&
+  #     true &&
+  #     s||f
+  #
+  #   skip_group
+  #
+  #   it "should skip" &&
+  #     true &&
+  #     s||f
+  #
+  #   it "should skip too" &&
+  #     true &&
+  #     s||f
+  #
+  # }
+  #
+  # Can also be used to skip the rest of the group when failing or skipping:
+  #
+  # describe "my group"; {
+  #
+  #   it "should work" &&
+  #     false &&
+  #     s||f || skip_group
+  #
+  #   it "should skip only if the first test fails or skip" &&
+  #     true &&
+  #     s||f
+  #
+  # }
+  #
+  if [[ "$group_description" != "" ]]; then
+    group_skip+=("$group_description")
+  fi
+}
+
+should_skip_group() {
+  # helper used to decide if a group test should skip
+ if [[ ${#group_skip[@]} -gt 0 ]] && [[ "${group_skip[${#group_skip[@]} - 1]}" == "$group_description" ]]; then
+   return 0
+ else
+   return 1
+ fi
+}
+
+should_skip() {
+  # helper used to decide if a test should skip
+  if [ ${#to_skip[@]} -gt 0 ] || should_skip_group; then 
+    return 0
+  else
+    return 1
+  fi
+}
+
+is_skipped_test() {
+  #
+  # Return 0 if the test has been skipped, 1 otherwise
+  local test_description="$(get_test_description)"
+
+  if [[ ${#test_skipped[@]} -gt 0 ]] &&
+    [[ "${test_skipped[${#test_skipped[@]} - 1]}" == "$test_description" ]]; then
+    return 0
+  else
+    return 1
+  fi
+}
+
+it() {
+  #
+  # Used to initiate a test. Set the test description (that can be recovered with `get_test_description`).
+  #
+
+  # log a new test with the given test description
+  log "T" "$1"
+
+  if should_skip; then 
+    # Log the test as skipped
+    log "X"
+    # reset the to_skip array
+    unset 'to_skip[0]'
+    # Returning 1 fails the chain skipping the assertion and the success function call; skip_or_fail_with will print
+    # the skipped test
+    return 1
+  fi
+}
+
+get_test_description() {
+  #
+  # Recover the last test description
+  #
+  echo "${test_cases[${#test_cases[@]} - 1]}"
+}
+
+group() {
+  #
+  # Used to group tests. Will allow to skip tests on fail (or manually) with `skip_group`
+
+  group_description="$1"
+
+  msg "\n$group_description:"
+}
+
+describe() {
+  #
+  # alias for group
+  group "$1"
+}
+
+when() {
+  #
+  # alias for group
+  group "$1"
+}
+
+success() {
+  #
+  # Handle the passed test print
+
+  local it="$(get_test_description)"
+
+  msg "- ${GREEN}it ${it}${NOFORMAT}"
+
+  # log the test as success
+  log "S"
+}
+
+skip_or_fail_with() {
+  #
+  # Handle both the skipped and the failed test print
+  local it="$(get_test_description)"
+
+  if is_skipped_test "$it"; then
+    # Print the test as skipped
+    msg "- ${BLUE}[skipped] it ${it}${NOFORMAT}"
+  else
+    # Print the test as failed with the error message
+    local error_message="$1"
+
+    msg "- ${RED}it ${it}${NOFORMAT}"
+    if [[ "$error_message" != "" ]]; then
+      msg "  E: ${RED}${error_message}${NOFORMAT}"
+    fi
+
+    # log the test as failed
+    log "F"
+  fi
+  return 1
+}
+
+print_output_in_error() {
+  #
+  # function used to print a command $output (from `run`) in an error message, like this:
+  #
+  # it "should work" &&
+  #   false &&
+  #   s||f "it does not: $(print_output_in_error)"
+  #
+
+  echo "\n\n  ---"
+  while IFS= read -r line; do
+    echo "  $line"
+  done <<< "$output"
+  echo "  ---"
+}
+
+#
+# `s` and `f` are two aliases for `success` and `skip_or_fail_with` that can be used as syntactic sugar like this:
+#
+# it "should work" &&
+#   true &&
+#   s||f
+#
+s() {
+  if success; then return 0; else return 1; fi
+}
+
+f() {
+  if skip_or_fail_with "$1"; then return 0; else return 1; fi
+}
+
+
+#
+# ASSERTIONS UTILITIES
+#
+
+run() {
+  #
+  # Evaluate with eval the strings passed as arguments.
+  #
+  # Will expose the command output as $output and its exit code as $exit_code.
+
+  local output_file="test_$test_case"
+
+  # Use a temporary file to save the output
+  eval "$@" >$output_file 2>&1
+
+  # store the exit code
+  exit_code=$?
+
+  # store the output and clear the tmp file
+  output=$(cat $output_file)
+  rm -f $output_file
+}
+
+assert_output_contains() {
+  #
+  # must be used after run since it will look for the $output variable
+
+  if [[ "$output" == *"$1"* ]]; then 
+    return 0
+  else
+    return 1
+  fi
+}
+
+assert_exit_code() {
+  #
+  # must be used after run since it will look for the $exit_code variable
+  local match=${1-"0"}
+
+  if [[ "$exit_code" == "$match" ]]; then
+    return 0
+  else 
+    return 1
+  fi
+}
+
+#
+# BEGIN AND END TEST RUN FUNCTIONS
+#
+
+begin_test_run() {
+  msg "Running the test suite..."
+}
+
+end_test_run() {
+  #
+  # Print the run report and exit accordingly
+
+  if [ ${#test_skipped[@]} -eq 0 ]; then
+    skipped=""
+  else
+    skipped="${BLUE} skipped: ${#test_skipped[@]}${NOFORMAT}"
+  fi
+
+  if [ ${#test_passed[@]} -eq 0 ]; then
+    passed=""
+  else
+    passed="${GREEN} passed: ${#test_passed[@]}${NOFORMAT}"
+  fi
+
+  if [[ ${#test_failed[@]} -eq 0 ]] && [[ ${#test_passed[@]} -eq 0 ]] && [[ ${#test_skipped[@]} -eq 0 ]]; then
+    die "\nNo test found."
+  fi
+
+  if [ ${#test_failed[@]} -eq 0 ]; then
+    msg "\n${GREEN}[OK]${passed}${skipped}${NOFORMAT}"
+    exit
+  else
+    die "\n${RED}[ERR] failed: ${#test_failed[@]}${passed}${skipped}${NOFORMAT}"
+  fi
+}
+
+#
+# TEST RUNNER
+#
+# source all test_*.sh file found in the given path (pwd by default) and run their tests
+
+setup_colors
+
+target_folder=${1-"$(pwd)"}
+
+if [[ ! -d "$target_folder" ]]; then
+  die "${RED}ERR: $target_folder does not exists${NOFORMAT}"
+fi
+
+check_for_tests=$(ls ${target_folder}/test_*.sh >/dev/null 2>&1)
+if [[ "$?" == 0 ]]; then
+  begin_test_run
+
+  for test_file in ${target_folder}/test_*.sh; do
+    source "$test_file"
+  done
+
+  end_test_run
+else
+  die "${RED}ERR: no test_*.sh file found in $target_folder.${NOFORMAT}"
+fi
