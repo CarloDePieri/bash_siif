@@ -152,15 +152,11 @@ describe() {
 
   group_name="$1"
 
-  msg "\n$group_name:"
-}
-
-end_describe() {
-  #
-  # forcefully close a group
-
-  group_name=""
   msg ""
+
+  if [[ "$1" != "" ]]; then 
+    msg "$group_name:"
+  fi
 }
 
 it() {
@@ -221,8 +217,16 @@ end_test_run() {
 }
 
 that_it_should_do() {
-  return 1
+  if [[ "$1" == "that" ]]; then return 1; else return 0; fi
 }
+
+# TODO
+# test runner
+# tests
+# skip group
+# run
+# runs
+# assert su run
 
 setup_colors
 
@@ -233,6 +237,8 @@ describe "a group"
   assert [[ -d /home/cik ]]
 
   assert that_it_should_do "that"
+
+  assert that_it_should_do "this"
 
   it "should not work"
   assert [[ -d /home/git ]]
@@ -249,7 +255,7 @@ describe "anoher group"
 
   assert [[ -d /home/git ]]
 }
-end_describe
+describe
 
 assert ls banana
 
